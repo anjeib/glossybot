@@ -64,20 +64,19 @@ def is_english(text):
     english_count = sum(1 for word in english_words if f" {word} " in text_lower)
     return english_count >= 3
 
-def translate_if_needed(text, lang):
-    if lang == 'en':
-        try:
-            return translator.translate(text, src='en', dest='ru').text
-        except Exception as e:
-            print(f"Ошибка перевода: {e}")
-            return text
-    return text
+def translate_text(text, from_lang='en', to_lang='ru'):
+    try:
+        translated = translator.translate(text, src=from_lang, dest=to_lang)
+        return translated.text
+    except Exception as e:
+        print(f"Ошибка перевода: {e}")
+        return text
 
 def rewrite_in_glossy_style(text, title, max_words=140):
-    # Переводим если текст на английском
-    text_to_process = text[:2000]  # Ограничиваем размер текста для обработки
+    # Обрабатываем текст
+    text_to_process = text[:2000]  # Ограничиваем размер текста
     
-    # Разделение текста на предложения без использования NLTK
+    # Разделение текста на предложения
     sentences = split_into_sentences(text_to_process)
     
     # Эмоциональные фразы в стиле канала
@@ -123,7 +122,7 @@ def rewrite_in_glossy_style(text, title, max_words=140):
     return content
 
 def split_into_sentences(text):
-    # Простая функция разделения текста на предложения без NLTK
+    # Простая функция разделения текста на предложения
     text = text.replace('!', '.').replace('?', '.')
     sentences = [s.strip() for s in text.split('.') if s.strip()]
     return sentences
@@ -148,9 +147,9 @@ async def on_message(message):
         
         # Перевод текста если он на английском
         if lang == 'en':
-            translated_text = translate_if_needed(text, lang)
             await message.channel.send("🌐 Текст на английском, выполняю перевод...")
-            text = translated_text
+            text = translate_text(text, from_lang='en', to_lang='ru')
+            title = translate_text(title, from_lang='en', to_lang='ru')
         
         # Переписываем текст в стиле канала
         glossy_text = rewrite_in_glossy_style(text, title)
@@ -169,7 +168,12 @@ async def on_message(message):
 
         await processing_msg.delete()
         await message.channel.send(glossy_text)
+    elif message.content.startswith("!стиль "):
+        # Прямая стилизация текста без парсинга ссылки
+        text = message.content[7:]  # Убираем "!стиль " из начала
+        glossy_text = rewrite_in_glossy_style(text, "")
+        await message.channel.send(glossy_text)
     else:
-        await message.channel.send("📎 Кинь ссылку на статью, и я сделаю тебе пост в стиле \"Осколки глянца\".")
+        await message.channel.send("📎 Кинь ссылку на статью или напиши '!стиль [текст]', и я сделаю пост в стиле \"Осколки глянца\".")
 
 client.run(TOKEN)
