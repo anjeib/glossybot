@@ -6,15 +6,7 @@ import re
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from io import BytesIO
-import nltk
-from nltk.tokenize import sent_tokenize
 from googletrans import Translator
-
-# Загрузка NLTK компонентов при первом запуске
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
@@ -33,7 +25,7 @@ def extract_content(url):
         title = soup.find("meta", property="og:title")
         image = soup.find("meta", property="og:image")
         
-        # Извлечение основного текста (разные сайты имеют разную структуру)
+        # Извлечение основного текста
         article_text = ""
         
         # Попытка найти основной контент
@@ -85,6 +77,9 @@ def rewrite_in_glossy_style(text, title, max_words=140):
     # Переводим если текст на английском
     text_to_process = text[:2000]  # Ограничиваем размер текста для обработки
     
+    # Разделение текста на предложения без использования NLTK
+    sentences = split_into_sentences(text_to_process)
+    
     # Эмоциональные фразы в стиле канала
     glossy_intros = [
         "Вы не поверите, но...",
@@ -110,7 +105,6 @@ def rewrite_in_glossy_style(text, title, max_words=140):
     ]
     
     # Создаем новый текст
-    sentences = sent_tokenize(text_to_process)
     if not sentences:
         content = f"{random.choice(glossy_intros)} {title}. {random.choice(glossy_outros)}"
     else:
@@ -127,6 +121,12 @@ def rewrite_in_glossy_style(text, title, max_words=140):
         content = ' '.join(words[:max_words])
     
     return content
+
+def split_into_sentences(text):
+    # Простая функция разделения текста на предложения без NLTK
+    text = text.replace('!', '.').replace('?', '.')
+    sentences = [s.strip() for s in text.split('.') if s.strip()]
+    return sentences
 
 @client.event
 async def on_ready():
