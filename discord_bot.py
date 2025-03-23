@@ -1,4 +1,3 @@
-
 import discord
 import os
 import requests
@@ -37,13 +36,13 @@ async def on_message(message):
 
     if message.content.startswith("http"):
         await message.channel.send("🔍 Обрабатываю ссылку...")
-
+    
         data = extract_og_data(message.content)
         title = data["title"]
         image_url = data["image_url"]
-
+    
         glossy_text = f"{title}\n\nЭто могла бы быть история. Это мог бы быть стиль."
-
+    
         if image_url:
             try:
                 img_data = requests.get(image_url).content
@@ -53,7 +52,7 @@ async def on_message(message):
             except Exception as e:
                 await message.channel.send(f"{glossy_text}\n(Не удалось прикрепить изображение)")
                 return
-
+    
         await message.channel.send(glossy_text)
     else:
         await message.channel.send("📎 Кинь ссылку на статью, и я сделаю тебе пост.")
