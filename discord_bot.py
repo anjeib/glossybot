@@ -1,29 +1,132 @@
 import discord
 import os
 import requests
+import random
+import re
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from io import BytesIO
+import nltk
+from nltk.tokenize import sent_tokenize
+from googletrans import Translator
+
+# Загрузка NLTK компонентов при первом запуске
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt')
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
+translator = Translator()
 
-def extract_og_data(url):
+def extract_content(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         r = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(r.text, "html.parser")
+        
+        # Извлечение OG-данных
         title = soup.find("meta", property="og:title")
         image = soup.find("meta", property="og:image")
+        
+        # Извлечение основного текста (разные сайты имеют разную структуру)
+        article_text = ""
+        
+        # Попытка найти основной контент
+        article = soup.find('article') or soup.find(class_=re.compile('article|content|post|story'))
+        
+        if article:
+            paragraphs = article.find_all('p')
+            article_text = ' '.join([p.text for p in paragraphs])
+        else:
+            # Запасной вариант - берем все параграфы
+            paragraphs = soup.find_all('p')
+            article_text = ' '.join([p.text for p in paragraphs])
+        
+        # Определение языка текста
+        lang = 'en' if is_english(article_text) else 'ru'
+            
         return {
             "title": title["content"] if title else "Без заголовка",
-            "image_url": image["content"] if image else None
+            "image_url": image["content"] if image else None,
+            "text": article_text,
+            "lang": lang
         }
     except Exception as e:
-        return {"title": "Ошибка парсинга", "image_url": None}
+        print(f"Ошибка при извлечении контента: {e}")
+        return {
+            "title": "Ошибка парсинга", 
+            "image_url": None,
+            "text": "",
+            "lang": "ru"
+        }
+
+def is_english(text):
+    # Простая проверка на английский язык
+    english_words = ['the', 'and', 'is', 'in', 'it', 'to', 'of', 'for', 'with', 'on']
+    text_lower = text.lower()
+    english_count = sum(1 for word in english_words if f" {word} " in text_lower)
+    return english_count >= 3
+
+def translate_if_needed(text, lang):
+    if lang == 'en':
+        try:
+            return translator.translate(text, src='en', dest='ru').text
+        except Exception as e:
+            print(f"Ошибка перевода: {e}")
+            return text
+    return text
+
+def rewrite_in_glossy_style(text, title, max_words=140):
+    # Переводим если текст на английском
+    text_to_process = text[:2000]  # Ограничиваем размер текста для обработки
+    
+    # Эмоциональные фразы в стиле канала
+    glossy_intros = [
+        "Вы не поверите, но...",
+        "Серьезно?",
+        "Боже, как это больно видеть.",
+        "Трясущимися руками листаю ленту.",
+        "Мода снова обнажает наши раны.",
+        "Ирония жизни режет по живому.",
+        "В этом есть что-то надломленное и прекрасное.",
+        "Стиль как диагноз эпохи.",
+        "За идеальной картинкой — всегда трещина."
+    ]
+    
+    # Эмоциональные фразы для заключения
+    glossy_outros = [
+        "#ОсколкиГлянца",
+        "Мода — это диагноз. Наш диагноз.",
+        "В каждом тренде — наша боль.",
+        "Стиль говорит громче слов.",
+        "Глянец разбивается о реальность.",
+        "Мода отражает наше одиночество.",
+        "За каждым образом — история потери."
+    ]
+    
+    # Создаем новый текст
+    sentences = sent_tokenize(text_to_process)
+    if not sentences:
+        content = f"{random.choice(glossy_intros)} {title}. {random.choice(glossy_outros)}"
+    else:
+        # Берем несколько предложений из оригинала и добавляем эмоциональный контекст
+        selected_sentences = sentences[:min(3, len(sentences))]
+        content_text = ' '.join(selected_sentences)
+        
+        # Формируем пост
+        content = f"{random.choice(glossy_intros)} {content_text}\n\n{random.choice(glossy_outros)}"
+    
+    # Ограничиваем количество слов
+    words = content.split()
+    if len(words) > max_words:
+        content = ' '.join(words[:max_words])
+    
+    return content
 
 @client.event
 async def on_ready():
@@ -35,26 +138,38 @@ async def on_message(message):
         return
 
     if message.content.startswith("http"):
-        await message.channel.send("🔍 Обрабатываю ссылку...")
-    
-        data = extract_og_data(message.content)
+        processing_msg = await message.channel.send("🔍 Обрабатываю ссылку...")
+
+        data = extract_content(message.content)
         title = data["title"]
         image_url = data["image_url"]
-    
-        glossy_text = f"{title}\n\nЭто могла бы быть история. Это мог бы быть стиль."
-    
+        text = data["text"]
+        lang = data["lang"]
+        
+        # Перевод текста если он на английском
+        if lang == 'en':
+            translated_text = translate_if_needed(text, lang)
+            await message.channel.send("🌐 Текст на английском, выполняю перевод...")
+            text = translated_text
+        
+        # Переписываем текст в стиле канала
+        glossy_text = rewrite_in_glossy_style(text, title)
+
         if image_url:
             try:
                 img_data = requests.get(image_url).content
                 file = discord.File(BytesIO(img_data), filename="image.jpg")
+                await processing_msg.delete()
                 await message.channel.send(content=glossy_text, file=file)
                 return
             except Exception as e:
+                await processing_msg.delete()
                 await message.channel.send(f"{glossy_text}\n(Не удалось прикрепить изображение)")
                 return
-    
+
+        await processing_msg.delete()
         await message.channel.send(glossy_text)
     else:
-        await message.channel.send("📎 Кинь ссылку на статью, и я сделаю тебе пост.")
+        await message.channel.send("📎 Кинь ссылку на статью, и я сделаю тебе пост в стиле \"Осколки глянца\".")
 
 client.run(TOKEN)
