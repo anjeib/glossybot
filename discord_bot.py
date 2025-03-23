@@ -1,19 +1,19 @@
 import discord
 import os
 import requests
-import random
 import re
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from io import BytesIO
-from googletrans import Translator
+from anthropic import Anthropic
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
-translator = Translator()
+anthropic = Anthropic(api_key=ANTHROPIC_API_KEY)
 
 def extract_content(url):
     try:
@@ -21,32 +21,26 @@ def extract_content(url):
         r = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(r.text, "html.parser")
         
-        # Извлечение OG-данных
         title = soup.find("meta", property="og:title")
+        if not title:
+            title = soup.find("title")
+            
         image = soup.find("meta", property="og:image")
         
-        # Извлечение основного текста
         article_text = ""
-        
-        # Попытка найти основной контент
         article = soup.find('article') or soup.find(class_=re.compile('article|content|post|story'))
         
         if article:
             paragraphs = article.find_all('p')
             article_text = ' '.join([p.text for p in paragraphs])
         else:
-            # Запасной вариант - берем все параграфы
             paragraphs = soup.find_all('p')
             article_text = ' '.join([p.text for p in paragraphs])
         
-        # Определение языка текста
-        lang = 'en' if is_english(article_text) else 'ru'
-            
         return {
-            "title": title["content"] if title else "Без заголовка",
+            "title": title["content"] if title and hasattr(title, "content") else (title.text if title else "Без заголовка"),
             "image_url": image["content"] if image else None,
             "text": article_text,
-            "lang": lang
         }
     except Exception as e:
         print(f"Ошибка при извлечении контента: {e}")
@@ -54,78 +48,83 @@ def extract_content(url):
             "title": "Ошибка парсинга", 
             "image_url": None,
             "text": "",
-            "lang": "ru"
         }
 
+def translate_accurately(text):
+    if not text:
+        return ""
+    
+    prompt = f"Переведи с английского на русский максимально точно и ясно:\n\n{text}"
+    response = anthropic.messages.create(
+        model="claude-3-7-sonnet-20250219",
+        max_tokens=600,
+        temperature=0.3,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.content[0].text.strip()
+
 def is_english(text):
-    # Простая проверка на английский язык
     english_words = ['the', 'and', 'is', 'in', 'it', 'to', 'of', 'for', 'with', 'on']
     text_lower = text.lower()
     english_count = sum(1 for word in english_words if f" {word} " in text_lower)
     return english_count >= 3
 
-def translate_text(text, from_lang='en', to_lang='ru'):
-    try:
-        translated = translator.translate(text, src=from_lang, dest=to_lang)
-        return translated.text
-    except Exception as e:
-        print(f"Ошибка перевода: {e}")
-        return text
+def story_rewrite(text):
+    prompt = f"""Ты — молодая, острая, дерзкая редакторка Telegram-канала "ОСКОЛКИ ГЛЯНЦА".
+Тебе 21, у тебя язвительный взгляд на модную индустрию и глянец.
 
-def rewrite_in_glossy_style(text, title, max_words=140):
-    # Обрабатываем текст
-    text_to_process = text[:2000]  # Ограничиваем размер текста
+Перепиши следующий текст как личный, эмоциональный пост от первого лица, будто делишься с друзьями:
+1. Начни с обращения "Ребят" или другого молодежного обращения
+2. Используй междометия, восклицания, эмоциональные реакции
+3. Добавь личный, почти дневниковый стиль с элементами разговорной речи
+4. Включи острые наблюдения о классовых противоречиях в моде
+5. Добавь метафоры, связанные с болью, рассечением, холодом
+6. Передай чувство одиночества наблюдателя за абсурдностью модной индустрии
+7. Используй короткие, рубленые предложения для создания напряжения
+8. Максимум 100 слов
+9. Обязательно покажи иронию и противоречивость модных трендов
+
+Вот стиль, как нужно примерно писать: "Ребят, вы не поверите, что вчера видела! Тимберленды! Гребаные ЖЕЛТЫЕ ТИМБЕРЫ на парижской неделе моды!
+Нет, серьезно. Louis Vuitton взял эти рабочие ботинки и сделал из них объект вожделения. Буквально трясущимися руками листала фотки.
+Фаррелл, этот хитрый лис, притащил уличную эстетику прямо в логово глянца. Обожаю, когда что-то грубое и настоящее врезается в стерильный мир.
+Кажется, вчера еще ловила на себе снисходительные взгляды за свои желтые боты, а сегодня это — верх изысканности. Ирония жизни режет по живому."
+
+Вот оригинал:
+{text}"""
+
+    response = anthropic.messages.create(
+        model="claude-3-7-sonnet-20250219",
+        max_tokens=400,
+        temperature=1.0,
+        messages=[{"role": "user", "content": prompt}]
+    )
     
-    # Разделение текста на предложения
-    sentences = split_into_sentences(text_to_process)
+    rewritten_text = response.content[0].text.strip()
     
-    # Эмоциональные фразы в стиле канала
-    glossy_intros = [
-        "Вы не поверите, но...",
-        "Серьезно?",
-        "Боже, как это больно видеть.",
-        "Трясущимися руками листаю ленту.",
-        "Мода снова обнажает наши раны.",
-        "Ирония жизни режет по живому.",
-        "В этом есть что-то надломленное и прекрасное.",
-        "Стиль как диагноз эпохи.",
-        "За идеальной картинкой — всегда трещина."
-    ]
-    
-    # Эмоциональные фразы для заключения
-    glossy_outros = [
-        "#ОсколкиГлянца",
-        "Мода — это диагноз. Наш диагноз.",
-        "В каждом тренде — наша боль.",
-        "Стиль говорит громче слов.",
-        "Глянец разбивается о реальность.",
-        "Мода отражает наше одиночество.",
-        "За каждым образом — история потери."
-    ]
-    
-    # Создаем новый текст
-    if not sentences:
-        content = f"{random.choice(glossy_intros)} {title}. {random.choice(glossy_outros)}"
-    else:
-        # Берем несколько предложений из оригинала и добавляем эмоциональный контекст
-        selected_sentences = sentences[:min(3, len(sentences))]
-        content_text = ' '.join(selected_sentences)
+    if "#ОсколкиГлянца" not in rewritten_text:
+        rewritten_text += "\n\n#ОсколкиГлянца"
         
-        # Формируем пост
-        content = f"{random.choice(glossy_intros)} {content_text}\n\n{random.choice(glossy_outros)}"
-    
-    # Ограничиваем количество слов
-    words = content.split()
-    if len(words) > max_words:
-        content = ' '.join(words[:max_words])
-    
-    return content
+    return rewritten_text
 
-def split_into_sentences(text):
-    # Простая функция разделения текста на предложения
-    text = text.replace('!', '.').replace('?', '.')
-    sentences = [s.strip() for s in text.split('.') if s.strip()]
-    return sentences
+def generate_filler_post():
+    topics = [
+        "fashion", "style", "cinema", "psychology", "music", "art", 
+        "feelings", "city", "nostalgia"
+    ]
+    import random
+    topic = random.choice(topics)
+    
+    prompt = f"Сгенерируй короткий (до 100 слов) авторский пост в стиле редактора глянцевого Telegram-канала. Тема — {topic}. Пост должен быть живым, умным, личным и атмосферным. Это может быть наблюдение, микроистория, размышление или культурная отсылка. Без ссылок. Без медиа. Только текст."
+    
+    response = anthropic.messages.create(
+        model="claude-3-7-sonnet-20250219",
+        max_tokens=300,
+        temperature=0.9,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    
+    raw_text = response.content[0].text.strip()
+    return story_rewrite(raw_text)
 
 @client.event
 async def on_ready():
@@ -143,16 +142,15 @@ async def on_message(message):
         title = data["title"]
         image_url = data["image_url"]
         text = data["text"]
-        lang = data["lang"]
         
-        # Перевод текста если он на английском
-        if lang == 'en':
+        # Перевод если нужно
+        if is_english(text):
             await message.channel.send("🌐 Текст на английском, выполняю перевод...")
-            text = translate_text(text, from_lang='en', to_lang='ru')
-            title = translate_text(title, from_lang='en', to_lang='ru')
+            text = translate_accurately(text)
+            title = translate_accurately(title)
         
-        # Переписываем текст в стиле канала
-        glossy_text = rewrite_in_glossy_style(text, title)
+        # Стилизация через Claude
+        glossy_text = story_rewrite(text)
 
         if image_url:
             try:
@@ -168,12 +166,18 @@ async def on_message(message):
 
         await processing_msg.delete()
         await message.channel.send(glossy_text)
+    
     elif message.content.startswith("!стиль "):
-        # Прямая стилизация текста без парсинга ссылки
-        text = message.content[7:]  # Убираем "!стиль " из начала
-        glossy_text = rewrite_in_glossy_style(text, "")
+        text = message.content[7:]
+        glossy_text = story_rewrite(text)
         await message.channel.send(glossy_text)
+    
+    elif message.content == "!живой":
+        await message.channel.send("Генерирую живой пост...")
+        filler_text = generate_filler_post()
+        await message.channel.send(filler_text)
+    
     else:
-        await message.channel.send("📎 Кинь ссылку на статью или напиши '!стиль [текст]', и я сделаю пост в стиле \"Осколки глянца\".")
+        await message.channel.send("📎 Кинь ссылку на статью, напиши '!стиль [текст]' для стилизации, или '!живой' для генерации живого поста.")
 
 client.run(TOKEN)
